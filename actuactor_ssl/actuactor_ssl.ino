@@ -1,7 +1,8 @@
 #include <PubSubClient.h>
 #include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
 
-const char* mqtt_server = "10.10.66.200";
+//const char* mqtt_server = "10.10.66.200";
 
 //static const uint8_t D0   = 16; // ACS_1
 //static const uint8_t D1   = 5;  // temp
@@ -10,9 +11,13 @@ const char* mqtt_server = "10.10.66.200";
 //static const uint8_t D8   = 15; // relay 4 - light
 //static const uint8_t D7; 		  // relay 7 - simulated
 
+const int httpsPort = 443;
+const char* fingerprint = "7A 6C B7 21 AC CA A4 E8 C4 F7 92 AF 97 73 10 CF 75 BE 26 45";
+const char* host = "4m1g0.com";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+WiFiClientSecure clientSec;
 
 char state[40];
 char topic_s[40];
@@ -22,6 +27,39 @@ unsigned long timer=millis();
 bool relayState1 = HIGH;
 bool relayState2 = HIGH;
 bool relayState = HIGH;
+
+void connect_ssl() 
+{
+  Serial.print("connecting to ");
+  Serial.println(host);
+  if (!clientSec.connect(host, httpsPort)) {
+    Serial.println("connection failed");
+    return;
+  }
+
+  if (clientSec.verify(fingerprint, host)) {
+    Serial.println("certificate matches");
+  } else {
+    Serial.println("certificate doesn't match");
+  }
+
+  String url = "/";
+  Serial.print("requesting URL: ");
+  Serial.println(url);
+
+  clientSec.print(String("GET ") + url + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "User-Agent: BuildFailureDetectorESP8266\r\n" +
+               "Connection: close\r\n\r\n");
+
+  Serial.println("request sent");
+  while (clientSec.connected()) {
+    String line = clientSec.readString();
+    Serial.print(line);
+  }
+
+  Serial.println("closing connection");
+}
 
 void setup_wifi()
 { 
@@ -52,9 +90,10 @@ void setup()
   digitalWrite(D4, HIGH);
   digitalWrite(D8, HIGH);
   digitalWrite(D7, HIGH);
-  Serial.begin(9600);   //USB as debug, external power
+  Serial.begin(9600);
   setup_wifi();
-  client.setServer(mqtt_server, 1883);
+  connect_ssl();
+  //client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
 }
 
@@ -113,7 +152,11 @@ int get_ADC_peak()
 float get_RMS_Current()
 {
   int VmaxADC = get_ADC_peak();
+ // Serial.print("ADC peak: ");
+ // Serial.println(VmaxADC);
   float Volt = VmaxADC * 3.22 / 1000;  // measured with potentiometer
+ // Serial.print("Volt peak: ");
+ // Serial.println(Volt);
   if (Volt < 2.5)
     return 0;
   float Current = 0.707 * (Volt - 2.49) / 0.185;  // Vef
@@ -142,30 +185,27 @@ void loop()
 
   if (strcmp(state, "ON") == 0 && relayState1 == HIGH && strcmp(topic_s, "/casa/P0/plug") == 0) //this mqtt message is send by the client
   {
+ //   Serial.println("turn ON plug");
     client.publish("/debug/node1", "turn ON plug");
     digitalWrite(D4, LOW);
     relayState1 = LOW;
   }
   if (strcmp(state, "OFF") == 0 && relayState1 == LOW && strcmp(topic_s, "/casa/P0/plug") == 0)
   {
-  //  client.publish("/debug/node1", "turn OFF plug");
     digitalWrite(D4, HIGH); 
     relayState1 = HIGH;
   }
 
   if (strcmp(state, "ON") == 0 && relayState2 == HIGH && strcmp(topic_s, "/casa/P0/light") == 0) //this mqtt message is send by the client
   {
-   // client.publish("/debug/node1", "turn ON light");
     digitalWrite(D8, LOW);
     relayState2 = LOW;
   }
   if (strcmp(state, "OFF") == 0 && relayState2 == LOW && strcmp(topic_s, "/casa/P0/light") == 0)
   {
-    //client.publish("/debug/node1", "turn OFF light");
     digitalWrite(D8, HIGH); 
     relayState2 = HIGH;
   }
-
 
   if (millis()-timer>=5000)  // 5 sec
   {
@@ -174,7 +214,7 @@ void loop()
     digitalWrite(D2, LOW); 
     power = current*220;
 
-    client.publish("/casa/P0/plug/power", dtostrf(power, 0, 2, msgbuf));
+	client.publish("/casa/P0/plug/power", dtostrf(power, 0, 2, msgbuf));
 
     digitalWrite(D1, HIGH);
     temp = analogRead(A0);
@@ -194,3 +234,4 @@ void loop()
     timer=millis();
   }
 }
+
